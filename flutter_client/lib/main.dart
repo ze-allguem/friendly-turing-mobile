@@ -258,6 +258,9 @@ class ReadingSession {
   final List<ReadingBlock> blocks;
   int progressIndex;
   final String date;
+  final int totalChunks;
+  int loadedChunksCount;
+  bool isLoadingChunks;
 
   ReadingSession({
     required this.sessionId,
@@ -265,6 +268,9 @@ class ReadingSession {
     required this.blocks,
     this.progressIndex = 0,
     required this.date,
+    this.totalChunks = 1,
+    this.loadedChunksCount = 0,
+    this.isLoadingChunks = false,
   });
 
   double get progressPercentage {
@@ -371,17 +377,25 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         final responseBody = await response.stream.bytesToString();
         final jsonResponse = jsonDecode(responseBody);
         final sessionId = jsonResponse['session_id'];
-        final List<dynamic> rawBlocks = jsonResponse['blocks'];
+        final totalChunks = jsonResponse['total_chunks'] ?? 1;
 
-        final List<ReadingBlock> blocks = rawBlocks
-            .map((b) => ReadingBlock.fromHtml(b.toString()))
-            .toList();
+        List<ReadingBlock> blocks = [];
+        int loadedCount = 0;
+        if (jsonResponse['blocks'] != null) {
+          final List<dynamic> rawBlocks = jsonResponse['blocks'];
+          blocks = rawBlocks
+              .map((b) => ReadingBlock.fromHtml(b.toString()))
+              .toList();
+          loadedCount = totalChunks;
+        }
 
         final newSession = ReadingSession(
           sessionId: sessionId,
           title: fileName.replaceAll('.pdf', ''),
           blocks: blocks,
           date: 'Agora',
+          totalChunks: totalChunks,
+          loadedChunksCount: loadedCount,
         );
 
         SessionManager.addSession(newSession);
@@ -863,6 +877,11 @@ class _ReaderScreenState extends State<ReaderScreen> {
     super.initState();
     _currentIndex = widget.session.progressIndex;
 
+    // Se a sessão tiver chunks pendentes para carregar, inicia o carregamento progressivo
+    if (widget.session.loadedChunksCount < widget.session.totalChunks) {
+      _loadNextChunks();
+    }
+
     // Listen to native audio playing state changes
     _playerPlaybackEventSub = _audioPlayer.playingStream.listen((playing) {
       if (mounted) {
@@ -878,6 +897,49 @@ class _ReaderScreenState extends State<ReaderScreen> {
         _advanceNextBlock();
       }
     });
+  }
+
+  Future<void> _loadNextChunks() async {
+    if (widget.session.isLoadingChunks) return;
+    widget.session.isLoadingChunks = true;
+
+    try {
+      while (widget.session.loadedChunksCount < widget.session.totalChunks) {
+        if (!mounted) break;
+        final nextChunkIdx = widget.session.loadedChunksCount;
+        final response = await http.get(
+          Uri.parse('$baseUrl/session/${widget.session.sessionId}/chunk/$nextChunkIdx'),
+          headers: ConfigManager.groqApiKey.isNotEmpty
+              ? {'X-Groq-Api-Key': ConfigManager.groqApiKey}
+              : {},
+        );
+
+        if (response.statusCode == 200) {
+          final data = jsonDecode(response.body);
+          final List<dynamic> chunkRawBlocks = data['blocks'];
+          final List<ReadingBlock> newBlocks = chunkRawBlocks
+              .map((b) => ReadingBlock.fromHtml(b.toString()))
+              .toList();
+
+          if (mounted) {
+            setState(() {
+              widget.session.blocks.addAll(newBlocks);
+              widget.session.loadedChunksCount++;
+            });
+          } else {
+            widget.session.blocks.addAll(newBlocks);
+            widget.session.loadedChunksCount++;
+          }
+        } else {
+          // Em caso de erro, aguarda e tenta novamente
+          await Future.delayed(const Duration(seconds: 3));
+        }
+      }
+    } catch (e) {
+      debugPrint('Erro ao carregar chunks progressivos: $e');
+    } finally {
+      widget.session.isLoadingChunks = false;
+    }
   }
 
   @override
@@ -1009,58 +1071,106 @@ class _ReaderScreenState extends State<ReaderScreen> {
           ),
         ],
       ),
-      body: Column(
-        children: [
-          // Header Info Banner
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-            color: _currentTheme.bannerColor,
-            child: Row(
-              children: [
-                Icon(
-                  Icons.touch_app_outlined,
-                  color: _currentTheme.bannerTextColor,
-                  size: 20,
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    'Toque sobre qualquer bloco para ler em voz alta com vozes neurais.',
+      body: widget.session.blocks.isEmpty
+          ? Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  CircularProgressIndicator(
+                    color: _currentTheme.accentColor,
+                  ),
+                  const SizedBox(height: 16),
+                  Text(
+                    'Organizando primeira página...',
                     style: TextStyle(
-                      fontSize: 12,
-                      color: _currentTheme.bannerTextColor.withOpacity(0.85),
-                      fontWeight: FontWeight.w600,
+                      color: _currentTheme.textColor.withOpacity(0.7),
+                      fontSize: 15,
+                      fontWeight: FontWeight.w500,
                     ),
                   ),
+                ],
+              ),
+            )
+          : Column(
+              children: [
+                // Header Info Banner
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                  color: _currentTheme.bannerColor,
+                  child: Row(
+                    children: [
+                      Icon(
+                        Icons.touch_app_outlined,
+                        color: _currentTheme.bannerTextColor,
+                        size: 20,
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          'Toque sobre qualquer bloco para ler em voz alta com vozes neurais.',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: _currentTheme.bannerTextColor.withOpacity(0.85),
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
+
+                // Scrollable Blocks list
+                Expanded(
+                  child: ListView.builder(
+                    controller: _scrollController,
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                    itemCount: blocks.length + (widget.session.loadedChunksCount < widget.session.totalChunks ? 1 : 0),
+                    itemBuilder: (context, index) {
+                      if (index == blocks.length) {
+                        return Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 24),
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              SizedBox(
+                                width: 18,
+                                height: 18,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  color: _currentTheme.accentColor,
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              Text(
+                                'Estruturando próximas páginas (${widget.session.loadedChunksCount}/${widget.session.totalChunks})...',
+                                style: TextStyle(
+                                  color: _currentTheme.textColor.withOpacity(0.6),
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
+                            ],
+                          ),
+                        );
+                      }
+                      
+                      final block = blocks[index];
+                      final key = _blockKeys.putIfAbsent(index, () => GlobalKey());
+                      final isCurrent = index == _currentIndex;
+
+                      return GestureDetector(
+                        key: key,
+                        onTap: () => _playBlock(index),
+                        child: _buildBlockWidget(block, isCurrent),
+                      );
+                    },
+                  ),
+                ),
+                // Playback Bottom controls bar
+                _buildBottomControlBar(blocks.length),
               ],
             ),
-          ),
-
-          // Scrollable Blocks list
-          Expanded(
-            child: ListView.builder(
-              controller: _scrollController,
-              padding: const EdgeInsets.symmetric(vertical: 16),
-              itemCount: blocks.length,
-              itemBuilder: (context, index) {
-                final block = blocks[index];
-                final key = _blockKeys.putIfAbsent(index, () => GlobalKey());
-                final isCurrent = index == _currentIndex;
-
-                return GestureDetector(
-                  key: key,
-                  onTap: () => _playBlock(index),
-                  child: _buildBlockWidget(block, isCurrent),
-                );
-              },
-            ),
-          ),
-          // Playback Bottom controls bar
-          _buildBottomControlBar(blocks.length),
-        ],
-      ),
     );
   }
 
@@ -1267,6 +1377,9 @@ class _ReaderScreenState extends State<ReaderScreen> {
     
     // Clean all paragraph tags globally from the text block
     cleanText = cleanText.replaceAll(RegExp(r'</?p[^>]*>'), '');
+    
+    // Remove initial indentation and trim spaces from each line
+    cleanText = cleanText.split('\n').map((line) => line.trim()).join('\n').trim();
 
     // Tokenize
     final tagRegex = RegExp(
