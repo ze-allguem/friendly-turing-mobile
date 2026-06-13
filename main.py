@@ -9,7 +9,7 @@ import httpx
 from pathlib import Path
 from fastapi import Request
 from fastapi.responses import FileResponse, StreamingResponse
-from fastapi import FastAPI, File, UploadFile, WebSocket, WebSocketDisconnect, BackgroundTasks
+from fastapi import FastAPI, File, UploadFile, WebSocket, WebSocketDisconnect, BackgroundTasks, Header
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -88,10 +88,10 @@ async def extract_text(file_bytes: bytes) -> str:
         text_pages.append(page.extract_text() or "")
     return "\n".join(text_pages)
 
-async def organize_text_via_groq(raw_text: str) -> str:
+async def organize_text_via_groq(raw_text: str, api_key: str) -> str:
     """Envia o texto extraído para o Groq a fim de otimizá-lo para leitura em voz alta."""
     headers = {
-        "Authorization": f"Bearer {GROQ_API_KEY}",
+        "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
     }
     payload = {
@@ -166,7 +166,7 @@ async def serve_index():
     return FileResponse(Path(__file__).parent / "index.html")
 
 @app.post("/upload")
-async def upload_pdf(file: UploadFile = File(...)):
+async def upload_pdf(file: UploadFile = File(...), x_groq_api_key: str = Header(None)):
     session_id = str(uuid.uuid4())
     file_bytes = await file.read()
     print(f"[Upload] Recebido arquivo: {file.filename} ({len(file_bytes)} bytes)")
@@ -196,7 +196,8 @@ async def upload_pdf(file: UploadFile = File(...)):
 
     # Executa o ajuste do Groq de forma síncrona para termos o texto ajustado
     print(f"[Groq] Enviando {len(truncated_raw)} caracteres (truncado: {is_truncated}) para análise...")
-    organized_text = await organize_text_via_groq(truncated_raw)
+    client_key = x_groq_api_key or GROQ_API_KEY
+    organized_text = await organize_text_via_groq(truncated_raw, client_key)
     print(f"[Groq] Resposta recebida ({len(organized_text)} caracteres)")
     
     # Divide o HTML organizado do Groq em blocos

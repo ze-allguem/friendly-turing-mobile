@@ -13,8 +13,10 @@ import 'package:path_provider/path_provider.dart';
 
 class ConfigManager {
   static String _serverUrl = 'http://192.168.100.5:8000';
+  static String _groqApiKey = '';
 
   static String get serverUrl => _serverUrl;
+  static String get groqApiKey => _groqApiKey;
 
   static Future<void> init() async {
     try {
@@ -25,6 +27,9 @@ class ConfigManager {
         if (data['server_url'] != null) {
           _serverUrl = data['server_url'];
         }
+        if (data['groq_api_key'] != null) {
+          _groqApiKey = data['groq_api_key'];
+        }
       }
     } catch (e) {
       debugPrint('Erro ao carregar config: $e');
@@ -33,10 +38,22 @@ class ConfigManager {
 
   static Future<void> saveServerUrl(String url) async {
     _serverUrl = url;
+    await _save();
+  }
+
+  static Future<void> saveGroqApiKey(String key) async {
+    _groqApiKey = key;
+    await _save();
+  }
+
+  static Future<void> _save() async {
     try {
       final dir = await getApplicationDocumentsDirectory();
       final file = File('${dir.path}/config.json');
-      await file.writeAsString(jsonEncode({'server_url': url}));
+      await file.writeAsString(jsonEncode({
+        'server_url': _serverUrl,
+        'groq_api_key': _groqApiKey,
+      }));
     } catch (e) {
       debugPrint('Erro ao salvar config: $e');
     }
@@ -400,6 +417,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
       final request = http.MultipartRequest('POST', Uri.parse('$baseUrl/upload'));
       request.files.add(await http.MultipartFile.fromPath('file', filePath));
+      if (ConfigManager.groqApiKey.isNotEmpty) {
+        request.headers['X-Groq-Api-Key'] = ConfigManager.groqApiKey;
+      }
 
       final response = await request.send();
 
@@ -581,9 +601,90 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                     ),
                   ),
                 ),
-
-
-
+                // Groq API Key Config Card
+                SliverToBoxAdapter(
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+                    child: Card(
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(16),
+                        side: BorderSide(
+                          color: const Color(0xFF0050D6).withOpacity(0.1),
+                          width: 1,
+                        ),
+                      ),
+                      child: Padding(
+                        padding: const EdgeInsets.all(20.0),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                const Icon(
+                                  Icons.vpn_key_rounded,
+                                  color: Color(0xFF0050D6),
+                                  size: 20,
+                                ),
+                                const SizedBox(width: 8),
+                                const Text(
+                                  'Configuração da IA (Groq)',
+                                  style: TextStyle(
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.bold,
+                                    color: Color(0xFF0F172A),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 10),
+                            const Text(
+                              'A IA organiza seus PDFs em cards otimizados. Crie uma chave gratuita no site da Groq e insira-a abaixo para ativar.',
+                              style: TextStyle(
+                                fontSize: 13,
+                                color: Color(0xFF64748B),
+                                height: 1.4,
+                              ),
+                            ),
+                            const SizedBox(height: 16),
+                            TextField(
+                              obscureText: true,
+                              decoration: const InputDecoration(
+                                labelText: 'Chave de API do Groq',
+                                border: OutlineInputBorder(
+                                  borderRadius: BorderRadius.all(Radius.circular(10)),
+                                ),
+                                prefixIcon: Icon(Icons.key, size: 20),
+                                hintText: 'gsk_...',
+                              ),
+                              controller: TextEditingController(text: ConfigManager.groqApiKey)..selection = TextSelection.fromPosition(TextPosition(offset: ConfigManager.groqApiKey.length)),
+                              onChanged: (val) {
+                                ConfigManager.saveGroqApiKey(val.trim());
+                              },
+                            ),
+                            const SizedBox(height: 12),
+                            Align(
+                              alignment: Alignment.centerRight,
+                              child: TextButton.icon(
+                                onPressed: () async {
+                                  final url = Uri.parse('https://console.groq.com/keys');
+                                  if (await canLaunchUrl(url)) {
+                                    await launchUrl(url, mode: LaunchMode.externalApplication);
+                                  }
+                                },
+                                icon: const Icon(Icons.open_in_new_rounded, size: 16),
+                                label: const Text('Obter Chave Gratuita'),
+                                style: TextButton.styleFrom(
+                                  foregroundColor: const Color(0xFF0050D6),
+                                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
                 // Title for Recent Readings
                 SliverToBoxAdapter(
                   child: Padding(
