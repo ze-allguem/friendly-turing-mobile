@@ -1,0 +1,162 @@
+<!-- Lumina Reader - Duas Telas Premium (Upload & Reader) -->
+<!DOCTYPE html>
+<html class="light" lang="pt-BR">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Lumina Reader</title>
+  
+  <!-- Fonts -->
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;700&display=swap" rel="stylesheet"/>
+  <link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible+Next:wght@400;700;800&family=Inter:wght@400;700&display=swap" rel="stylesheet"/>
+  <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet"/>
+  
+  <!-- Estilos Externos -->
+  <link href="/static/style.css" rel="stylesheet"/>
+</head>
+<body>
+
+  <!-- ================= TELA 1: PÁGINA INICIAL (HOME) ================= -->
+  <div id="home-view" class="view-container">
+    <main class="home-main">
+      <section class="welcome-section">
+        <div class="logo-container" style="display: flex; align-items: center; gap: 12px; margin-bottom: 20px;">
+          <div class="logo-icon" style="background: linear-gradient(135deg, var(--color-brand), #3b82f6); padding: 10px 12px; border-radius: 14px; color: white; display: flex; align-items: center; justify-content: center; box-shadow: 0 4px 10px rgba(0, 80, 214, 0.25);">
+            <span class="material-symbols-outlined" style="font-size: 24px;">menu_book</span>
+          </div>
+          <div>
+            <div class="logo-text" style="font-size: 1.4rem; font-weight: 900; letter-spacing: 1.5px; color: var(--color-brand); line-height: 1.1;">LUMINA <span style="font-weight: 300; color: var(--color-text);">READER</span></div>
+            <div style="font-size: 0.65rem; font-weight: 700; color: var(--color-muted); letter-spacing: 0.5px; text-transform: uppercase; margin-top: 2px;">Leitura Otimizada por IA</div>
+          </div>
+        </div>
+        <h1>Bem-vindo à sua biblioteca focada.</h1>
+        <p>Sua leitura, sem distrações.</p>
+      </section>
+      
+      <section class="upload-section">
+        <div id="drop-zone" class="upload-zone">
+          <div class="upload-icon-wrapper">
+            <span class="material-symbols-outlined upload-icon-symbol">upload_file</span>
+          </div>
+          <h3>Upload PDF</h3>
+          <p>Arraste seu PDF aqui ou clique para buscar</p>
+          <button id="select-btn" class="btn">Selecionar Arquivo</button>
+          <input id="file-input" type="file" accept=".pdf" class="hidden"/>
+        </div>
+      </section>
+      
+      <section class="recent-section">
+        <div class="recent-header">
+          <h2>Leituras Recentes</h2>
+          <a href="#" class="view-all-link">Ver tudo</a>
+        </div>
+        
+        <div class="recent-list">
+          <div class="no-recent-message" style="text-align: center; padding: 24px; color: var(--color-muted); font-size: 0.9rem; background: var(--bg-card); border-radius: 16px; border: 1px solid var(--color-border); width: 100%;">
+            Nenhum documento lido recentemente.
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <!-- Barra de Navegação Inferior da Home -->
+    <nav class="bottom-nav">
+      <button class="nav-btn active">
+        <span class="material-symbols-outlined nav-icon-play">play_arrow</span>
+      </button>
+      <button class="nav-btn">
+        <span class="material-symbols-outlined">speed</span>
+      </button>
+      <button class="nav-btn">
+        <span class="material-symbols-outlined">record_voice_over</span>
+      </button>
+      <button class="nav-btn" id="theme-toggle">
+        <span class="material-symbols-outlined">contrast</span>
+      </button>
+      <button class="nav-btn">
+        <span class="material-symbols-outlined">settings</span>
+      </button>
+    </nav>
+  </div>
+
+
+  <!-- ================= TELA 2: LEITOR DE PDF (READER) ================= -->
+  <div id="reader-view" class="view-container hidden">
+    <header class="reader-header">
+      <button class="icon-btn" id="back-btn">
+        <span class="material-symbols-outlined">arrow_back</span>
+      </button>
+      <div class="logo" id="header-title">O Capital - Livro I</div>
+      <button class="icon-btn" id="search-btn">
+        <span class="material-symbols-outlined">search</span>
+      </button>
+    </header>
+    
+    <main class="reader-main">
+      <!-- Área de Exibição do Texto Extraído em Blocos -->
+      <section id="text-container">
+        <!-- Banner informativo sobre clique para leitura -->
+        <div class="info-banner">
+          <span class="material-symbols-outlined info-banner-icon">info</span>
+          <span>Clique em qualquer bloco para ouvir a leitura em voz alta.</span>
+        </div>
+        <div id="text-content">
+          <!-- Preenchido dinamicamente com os cards -->
+        </div>
+      </section>
+    </main>
+
+    <!-- Controlador de Áudio/Playback Inferior -->
+    <div class="playback-controller">
+      <!-- Seletor de Voz -->
+      <div class="voice-selector-row">
+        <button class="controller-pill-btn" id="voice-btn">
+          <span class="material-symbols-outlined pill-icon">person</span>
+          <span id="active-voice-label">Francisca (Feminina)</span>
+        </button>
+        <!-- Menu Flutuante de Vozes -->
+        <div class="voice-dropdown hidden" id="voice-dropdown-menu">
+          <button class="voice-option active" data-voice="pt-BR-FranciscaNeural" data-provider="local">Francisca (Feminina)</button>
+          <button class="voice-option" data-voice="pt-BR-AntonioNeural" data-provider="local">Antônio (Masculino)</button>
+        </div>
+      </div>
+
+      <!-- Controles de Playback -->
+      <div class="playback-controls-row">
+        <button class="control-icon-btn" id="prev-btn">
+          <span class="material-symbols-outlined">skip_previous</span>
+        </button>
+        <button class="play-main-btn" id="play-pause-btn">
+          <span class="material-symbols-outlined" id="play-icon-symbol">play_arrow</span>
+        </button>
+        <button class="control-icon-btn" id="next-btn">
+          <span class="material-symbols-outlined">skip_next</span>
+        </button>
+      </div>
+
+      <!-- Seletor de Velocidade -->
+      <div class="speed-selector-row">
+        <button class="controller-pill-btn" id="speed-btn">
+          <span class="material-symbols-outlined pill-icon">link</span>
+          <span id="active-speed-label">1.2x</span>
+          <span class="material-symbols-outlined dropdown-arrow">arrow_drop_down</span>
+        </button>
+        <!-- Menu Flutuante de Velocidades -->
+        <div class="speed-dropdown hidden" id="speed-dropdown-menu">
+          <button class="speed-option" data-speed="0.8">0.8x</button>
+          <button class="speed-option" data-speed="1.0">1.0x</button>
+          <button class="speed-option active" data-speed="1.2">1.2x</button>
+          <button class="speed-option" data-speed="1.5">1.5x</button>
+          <button class="speed-option" data-speed="2.0">2.0x</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Reprodutor de Áudio Oculto (Controlado programaticamente via JS) -->
+  <audio id="audio-player" class="hidden"></audio>
+
+  <!-- Scripts Externos -->
+  <script src="/static/main.js"></script>
+</body>
+</html>

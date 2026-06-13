@@ -1,0 +1,4 @@
+.material-symbols-outlined {font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;}
+body {background-color: #fcf8f9; color: #1b1b1c; -webkit-font-smoothing: antialiased;}
+.upload-zone {transition: border-color 0.2s ease, background-color 0.2s ease;}
+.upload-zone:hover {border-color: #0040e0; background-color: rgba(0,64,224,0.04);}
