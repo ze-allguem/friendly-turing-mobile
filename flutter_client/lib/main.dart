@@ -12,10 +12,9 @@ import 'package:just_audio/just_audio.dart';
 import 'package:path_provider/path_provider.dart';
 
 class ConfigManager {
-  static String _serverUrl = 'http://192.168.100.5:8000';
+  static const String serverUrl = 'https://friendly-turing-mobile.onrender.com';
   static String _groqApiKey = '';
 
-  static String get serverUrl => _serverUrl;
   static String get groqApiKey => _groqApiKey;
 
   static Future<void> init() async {
@@ -24,9 +23,6 @@ class ConfigManager {
       final file = File('${dir.path}/config.json');
       if (await file.exists()) {
         final data = jsonDecode(await file.readAsString());
-        if (data['server_url'] != null) {
-          _serverUrl = data['server_url'];
-        }
         if (data['groq_api_key'] != null) {
           _groqApiKey = data['groq_api_key'];
         }
@@ -34,11 +30,6 @@ class ConfigManager {
     } catch (e) {
       debugPrint('Erro ao carregar config: $e');
     }
-  }
-
-  static Future<void> saveServerUrl(String url) async {
-    _serverUrl = url;
-    await _save();
   }
 
   static Future<void> saveGroqApiKey(String key) async {
@@ -51,7 +42,6 @@ class ConfigManager {
       final dir = await getApplicationDocumentsDirectory();
       final file = File('${dir.path}/config.json');
       await file.writeAsString(jsonEncode({
-        'server_url': _serverUrl,
         'groq_api_key': _groqApiKey,
       }));
     } catch (e) {
@@ -349,53 +339,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     }
   }
 
-  void _showSettingsDialog() {
-    final controller = TextEditingController(text: ConfigManager.serverUrl);
-    showDialog(
-      context: context,
-      builder: (context) {
-        return AlertDialog(
-          title: const Text('Configurações do Servidor'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Text(
-                'Digite a URL do seu servidor backend (ex: nuvem ou IP local):',
-                style: TextStyle(fontSize: 13, color: Color(0xFF64748B)),
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: controller,
-                decoration: const InputDecoration(
-                  labelText: 'URL do Servidor',
-                  border: OutlineInputBorder(),
-                  hintText: 'https://seu-servidor.onrender.com',
-                ),
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Cancelar'),
-            ),
-            ElevatedButton(
-              onPressed: () async {
-                String url = controller.text.trim();
-                if (url.endsWith('/')) {
-                  url = url.substring(0, url.length - 1);
-                }
-                await ConfigManager.saveServerUrl(url);
-                Navigator.pop(context);
-                setState(() {});
-              },
-              child: const Text('Salvar'),
-            ),
-          ],
-        );
-      },
-    );
-  }
+
 
   Future<void> _pickAndUploadPDF() async {
     try {
@@ -541,12 +485,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                               ),
                             ),
                           ],
-                        ),
-                        const Spacer(),
-                        IconButton(
-                          icon: const Icon(Icons.settings_outlined, color: Color(0xFF64748B)),
-                          tooltip: 'Configurar Servidor',
-                          onPressed: _showSettingsDialog,
                         ),
                       ],
                     ),
