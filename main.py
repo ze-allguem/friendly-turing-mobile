@@ -165,6 +165,41 @@ def split_html_into_blocks(html_content: str):
 async def serve_index():
     return FileResponse(Path(__file__).parent / "index.html")
 
+def chunk_text(text: str, max_chunk_chars: int = 15000) -> list[str]:
+    """Divide o texto em pedaços de no máximo max_chunk_chars, respeitando quebras de linha."""
+    paragraphs = text.split("\n")
+    chunks = []
+    current_chunk = []
+    current_length = 0
+    
+    for para in paragraphs:
+        if len(para) > max_chunk_chars:
+            if current_chunk:
+                chunks.append("\n".join(current_chunk))
+                current_chunk = []
+                current_length = 0
+            
+            # Divide parágrafo muito longo
+            start = 0
+            while start < len(para):
+                end = start + max_chunk_chars
+                chunks.append(para[start:end])
+                start = end
+            continue
+            
+        if current_length + len(para) + 1 > max_chunk_chars:
+            chunks.append("\n".join(current_chunk))
+            current_chunk = [para]
+            current_length = len(para)
+        else:
+            current_chunk.append(para)
+            current_length += len(para) + 1
+            
+    if current_chunk:
+        chunks.append("\n".join(current_chunk))
+        
+    return chunks
+
 @app.post("/upload")
 async def upload_pdf(file: UploadFile = File(...), x_groq_api_key: str = Header(None)):
     session_id = str(uuid.uuid4())
@@ -187,26 +222,41 @@ async def upload_pdf(file: UploadFile = File(...), x_groq_api_key: str = Header(
         sessions[session_id] = blocks
         return JSONResponse(content={"session_id": session_id, "blocks": blocks})
 
-    # Limita o texto enviado ao Groq para evitar erros de limites de tokens (TPM) da API do Groq
-    max_chars = 6000
-    is_truncated = len(clean_raw) > max_chars
-    truncated_raw = clean_raw[:max_chars]
-    if is_truncated:
-        truncated_raw += "\n... [Continua no PDF original]"
+    # Limita o texto total máximo a ser processado para segurança (ex: 250.000 caracteres, ~50 páginas de puro texto)
+    max_safety_chars = 250000
+    if len(clean_raw) > max_safety_chars:
+        print(f"[Upload] Texto muito longo ({len(clean_raw)} chars). Limitando para os primeiros {max_safety_chars} caracteres.")
+        clean_raw = clean_raw[:max_safety_chars]
 
-    # Executa o ajuste do Groq de forma síncrona para termos o texto ajustado
-    print(f"[Groq] Enviando {len(truncated_raw)} caracteres (truncado: {is_truncated}) para análise...")
+    # Divide o texto completo em pedaços razoáveis para o Groq (cerca de 15.000 caracteres por chamada)
+    chunks = chunk_text(clean_raw, max_chunk_chars=15000)
+    print(f"[Upload] Texto dividido em {len(chunks)} blocos para estruturação pelo Groq.")
+
     client_key = x_groq_api_key or GROQ_API_KEY
-    organized_text = await organize_text_via_groq(truncated_raw, client_key)
-    print(f"[Groq] Resposta recebida ({len(organized_text)} caracteres)")
+    semaphore = asyncio.Semaphore(3) # Limita chamadas paralelas para respeitar TPM/RPM
     
-    # Divide o HTML organizado do Groq em blocos
-    blocks = split_html_into_blocks(organized_text)
-    if not blocks:
-        blocks = ["<div class=\"reading-block\"><p>Nenhum texto legível foi extraído do documento de PDF.</p></div>"]
+    async def process_chunk(chunk_content: str, idx: int):
+        async with semaphore:
+            if idx > 0:
+                await asyncio.sleep(0.5 * idx) # Pequeno delay escalonado para evitar picos
+            print(f"[Groq] Enviando parte {idx+1}/{len(chunks)} ({len(chunk_content)} caracteres)...")
+            return await organize_text_via_groq(chunk_content, client_key)
+
+    tasks = [process_chunk(c, i) for i, c in enumerate(chunks)]
+    organized_results = await asyncio.gather(*tasks)
+
+    # Une todos os blocos gerados pelas chamadas
+    all_blocks = []
+    for i, organized_text in enumerate(organized_results):
+        print(f"[Groq] Processando resposta da parte {i+1} ({len(organized_text)} caracteres)")
+        chunk_blocks = split_html_into_blocks(organized_text)
+        all_blocks.extend(chunk_blocks)
+
+    if not all_blocks:
+        all_blocks = ["<div class=\"reading-block\"><p>Nenhum texto legível foi extraído do documento de PDF.</p></div>"]
         
-    sessions[session_id] = blocks
-    return JSONResponse(content={"session_id": session_id, "blocks": blocks})
+    sessions[session_id] = all_blocks
+    return JSONResponse(content={"session_id": session_id, "blocks": all_blocks})
 
 @app.get("/mock-session/{mock_id}")
 async def get_mock_session(mock_id: str):
