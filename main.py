@@ -165,52 +165,66 @@ def split_html_into_blocks(html_content: str):
 async def serve_index():
     return FileResponse(Path(__file__).parent / "index.html")
 
-def chunk_text(text: str, max_chunk_chars: int = 15000) -> list[str]:
-    """Divide o texto em pedaços de no máximo max_chunk_chars, respeitando quebras de linha."""
-    paragraphs = text.split("\n")
-    chunks = []
-    current_chunk = []
-    current_length = 0
+raw_sessions: Dict[str, list] = {}
+structured_sessions: Dict[str, Dict[int, list]] = {}
+
+async def pre_structure_session(session_id: str, chunks: list, client_key: str):
+    """Estrutura os chunks em segundo plano, respeitando limites de RPM/TPM."""
+    semaphore = asyncio.Semaphore(2)
     
-    for para in paragraphs:
-        if len(para) > max_chunk_chars:
-            if current_chunk:
-                chunks.append("\n".join(current_chunk))
-                current_chunk = []
-                current_length = 0
-            
-            # Divide parágrafo muito longo
-            start = 0
-            while start < len(para):
-                end = start + max_chunk_chars
-                chunks.append(para[start:end])
-                start = end
-            continue
-            
-        if current_length + len(para) + 1 > max_chunk_chars:
-            chunks.append("\n".join(current_chunk))
-            current_chunk = [para]
-            current_length = len(para)
-        else:
-            current_chunk.append(para)
-            current_length += len(para) + 1
-            
-    if current_chunk:
-        chunks.append("\n".join(current_chunk))
-        
-    return chunks
+    async def worker(chunk_content: str, idx: int):
+        if session_id not in raw_sessions:
+            return
+        if session_id in structured_sessions and idx in structured_sessions[session_id]:
+            return
+        try:
+            await asyncio.sleep(1.0 * idx) # Delay progressivo
+            print(f"[Background] Estruturando chunk {idx+1}/{len(chunks)}...")
+            organized_text = await organize_text_via_groq(chunk_content, client_key)
+            chunk_blocks = split_html_into_blocks(organized_text)
+            if session_id not in structured_sessions:
+                structured_sessions[session_id] = {}
+            structured_sessions[session_id][idx] = chunk_blocks
+            print(f"[Background] Chunk {idx+1}/{len(chunks)} concluído")
+        except Exception as e:
+            print(f"[Background] Erro no chunk {idx}: {e}")
+
+    tasks = [worker(c, i) for i, c in enumerate(chunks)]
+    await asyncio.gather(*tasks)
 
 @app.post("/upload")
-async def upload_pdf(file: UploadFile = File(...), x_groq_api_key: str = Header(None)):
+async def upload_pdf(background_tasks: BackgroundTasks, file: UploadFile = File(...), x_groq_api_key: str = Header(None)):
     session_id = str(uuid.uuid4())
     file_bytes = await file.read()
     print(f"[Upload] Recebido arquivo: {file.filename} ({len(file_bytes)} bytes)")
-    raw_text = await extract_text(file_bytes)
     
-    # Valida se conseguimos extrair texto do PDF para evitar alucinações da IA com prompts vazios
-    clean_raw = raw_text.strip()
-    if len(clean_raw) < 20:
-        print(f"[Upload] O texto extraído é muito curto ({len(clean_raw)} caracteres). Retornando aviso de PDF escaneado.")
+    reader = PdfReader(BytesIO(file_bytes))
+    chunks = []
+    current_chunk = []
+    current_len = 0
+    
+    # Extrai o texto organizando-o página por página
+    for i, page in enumerate(reader.pages):
+        page_text = page.extract_text() or ""
+        page_text = page_text.strip()
+        if not page_text:
+            continue
+        
+        # Agrupa páginas até atingir cerca de 8000 caracteres por chunk
+        if current_len + len(page_text) > 8000 and current_chunk:
+            chunks.append("\n\n".join(current_chunk))
+            current_chunk = [page_text]
+            current_len = len(page_text)
+        else:
+            current_chunk.append(page_text)
+            current_len += len(page_text) + 2
+            
+    if current_chunk:
+        chunks.append("\n\n".join(current_chunk))
+
+    # Valida se conseguimos extrair texto
+    if not chunks:
+        print(f"[Upload] O texto extraído é nulo ou curto. Retornando aviso de PDF escaneado.")
         blocks = [
             "<div class=\"reading-block definition\">"
             "<h2>Aviso de Leitura</h2>"
@@ -220,43 +234,54 @@ async def upload_pdf(file: UploadFile = File(...), x_groq_api_key: str = Header(
             "</div>"
         ]
         sessions[session_id] = blocks
-        return JSONResponse(content={"session_id": session_id, "blocks": blocks})
+        return JSONResponse(content={"session_id": session_id, "total_chunks": 1, "blocks": blocks})
 
-    # Limita o texto total máximo a ser processado para segurança (ex: 250.000 caracteres, ~50 páginas de puro texto)
-    max_safety_chars = 250000
-    if len(clean_raw) > max_safety_chars:
-        print(f"[Upload] Texto muito longo ({len(clean_raw)} chars). Limitando para os primeiros {max_safety_chars} caracteres.")
-        clean_raw = clean_raw[:max_safety_chars]
-
-    # Divide o texto completo em pedaços razoáveis para o Groq (cerca de 15.000 caracteres por chamada)
-    chunks = chunk_text(clean_raw, max_chunk_chars=15000)
-    print(f"[Upload] Texto dividido em {len(chunks)} blocos para estruturação pelo Groq.")
-
-    client_key = x_groq_api_key or GROQ_API_KEY
-    semaphore = asyncio.Semaphore(3) # Limita chamadas paralelas para respeitar TPM/RPM
+    # Armazena chunks originais e inicia armazenamento estruturado
+    raw_sessions[session_id] = chunks
+    structured_sessions[session_id] = {}
+    print(f"[Upload] PDF dividido em {len(chunks)} chunks de páginas. Iniciando estruturação em background...")
     
-    async def process_chunk(chunk_content: str, idx: int):
-        async with semaphore:
-            if idx > 0:
-                await asyncio.sleep(0.5 * idx) # Pequeno delay escalonado para evitar picos
-            print(f"[Groq] Enviando parte {idx+1}/{len(chunks)} ({len(chunk_content)} caracteres)...")
-            return await organize_text_via_groq(chunk_content, client_key)
+    client_key = x_groq_api_key or GROQ_API_KEY
+    background_tasks.add_task(pre_structure_session, session_id, chunks, client_key)
+    
+    # Retorna imediatamente com o session_id e o total de chunks
+    return JSONResponse(content={
+        "session_id": session_id,
+        "total_chunks": len(chunks),
+        "title": file.filename.replaceAll('.pdf', '') if hasattr(file.filename, 'replaceAll') else file.filename.replace('.pdf', '')
+    })
 
-    tasks = [process_chunk(c, i) for i, c in enumerate(chunks)]
-    organized_results = await asyncio.gather(*tasks)
+@app.get("/session/{session_id}/chunk/{chunk_index}")
+async def get_session_chunk(session_id: str, chunk_index: int, x_groq_api_key: str = Header(None)):
+    # Caso seja um mock, retorna todo o mock como único chunk
+    if session_id.startswith("mock_"):
+        if session_id not in sessions:
+            return JSONResponse(status_code=404, content={"detail": "Mock de sessão não encontrado."})
+        return {"blocks": sessions[session_id]}
 
-    # Une todos os blocos gerados pelas chamadas
-    all_blocks = []
-    for i, organized_text in enumerate(organized_results):
-        print(f"[Groq] Processando resposta da parte {i+1} ({len(organized_text)} caracteres)")
-        chunk_blocks = split_html_into_blocks(organized_text)
-        all_blocks.extend(chunk_blocks)
-
-    if not all_blocks:
-        all_blocks = ["<div class=\"reading-block\"><p>Nenhum texto legível foi extraído do documento de PDF.</p></div>"]
-        
-    sessions[session_id] = all_blocks
-    return JSONResponse(content={"session_id": session_id, "blocks": all_blocks})
+    if session_id not in raw_sessions:
+        return JSONResponse(status_code=404, content={"detail": "Sessão não encontrada."})
+    
+    chunks = raw_sessions[session_id]
+    if chunk_index < 0 or chunk_index >= len(chunks):
+        return JSONResponse(status_code=404, content={"detail": "Índice de chunk inválido."})
+    
+    # Se já estruturado, retorna imediatamente
+    if session_id in structured_sessions and chunk_index in structured_sessions[session_id]:
+        return {"blocks": structured_sessions[session_id][chunk_index]}
+    
+    # Se ainda não estiver estruturado, processa sob demanda (síncrono rápido)
+    print(f"[Upload] Processando chunk {chunk_index} sob demanda (bloqueante rápido)...")
+    chunk_content = chunks[chunk_index]
+    client_key = x_groq_api_key or GROQ_API_KEY
+    organized_text = await organize_text_via_groq(chunk_content, client_key)
+    chunk_blocks = split_html_into_blocks(organized_text)
+    
+    if session_id not in structured_sessions:
+        structured_sessions[session_id] = {}
+    structured_sessions[session_id][chunk_index] = chunk_blocks
+    
+    return {"blocks": chunk_blocks}
 
 @app.get("/mock-session/{mock_id}")
 async def get_mock_session(mock_id: str):
